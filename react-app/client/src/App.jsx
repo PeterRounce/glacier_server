@@ -213,14 +213,40 @@ function App() {
       return { operation: 'Lock Funds', icon: '🔒', color: '#dc2626' };
     }
     
-    // If it's a send transaction, determine if it's funding or unlocking
-    if (tx.category === 'send') {
-      // Check if this is sending TO a timelock address (funding before lock is created)
-      if (tx.address && timelockAddresses.has(tx.address)) {
-        return { operation: 'Fund Timelock', icon: '💰', color: '#f59e0b' };
+    // If it's a send transaction, check decoded outputs and inputs
+    if (tx.category === 'send' && tx.decoded) {
+      // Check if spending FROM timelock (unlocking)
+      if (tx.decoded.vin) {
+        const spendsFromTimelock = tx.decoded.vin.some(input => {
+          if (input.scriptSig && input.scriptSig.asm && 
+              input.scriptSig.asm.includes('OP_CHECKLOCKTIMEVERIFY')) {
+            return true;
+          }
+          if (input.txinwitness && input.txinwitness.length > 0) {
+            const lastWitnessItem = input.txinwitness[input.txinwitness.length - 1];
+            if (lastWitnessItem && lastWitnessItem.includes('b1')) {
+              return true;
+            }
+          }
+          return false;
+        });
+        if (spendsFromTimelock) {
+          return { operation: 'Unlock Funds', icon: '�', color: '#059669' };
+        }
       }
-      // Otherwise it's an unlock transaction (sending out)
-      return { operation: 'Unlock Funds', icon: '🔓', color: '#059669' };
+      
+      // Check if sending TO a timelock address (funding)
+      if (tx.decoded.vout) {
+        const sendsToTimelock = tx.decoded.vout.some(output => {
+          if (output.scriptPubKey && output.scriptPubKey.address) {
+            return timelockAddresses.has(output.scriptPubKey.address);
+          }
+          return false;
+        });
+        if (sendsToTimelock) {
+          return { operation: 'Fund Timelock', icon: '�', color: '#f59e0b' };
+        }
+      }
     }
     
     return { operation: 'Related', icon: '🔗', color: '#3b82f6' };
@@ -239,32 +265,14 @@ function App() {
         console.log(`🔍 Looking for transactions involving timelock addresses:`, Array.from(timelockAddresses));
       }
       
-      // Filter for timelock-related transactions:
-      // 1. Fund transactions (send to any address when creating timelock)
-      // 2. Lock transactions (send to P2SH timelock address)
-      // 3. Unlock transactions (send from wallet after unlocking)
-      const timelockTxs = txList.filter(tx => {
-        // Show all send transactions (funding and unlocking)
-        if (tx.category === 'send') {
-          return true;
-        }
-        
-        // Show receives to timelock addresses (locking)
-        if (tx.category === 'receive' && tx.address && timelockAddresses.has(tx.address)) {
-          return true;
-        }
-        
-        return false;
-      }).slice(0, 10);
-      
-      // Fetch decoded transaction details (includes scripts) for each transaction
-      const txsWithScripts = await Promise.all(
-        timelockTxs.map(async (tx) => {
+      // First, fetch decoded data for all transactions to check outputs
+      const txsWithDecoded = await Promise.all(
+        txList.map(async (tx) => {
           try {
             const decoded = await bitcoinApi.getTransactionDecoded(tx.txid, network);
             return {
               ...tx,
-              decoded: decoded.decoded // Contains vout with scriptPubKey.asm
+              decoded: decoded.decoded // Contains vout with scriptPubKey addresses
             };
           } catch (error) {
             console.error(`Could not decode tx ${tx.txid}:`, error.message);
@@ -273,8 +281,52 @@ function App() {
         })
       );
       
-      setRecentTransactions(txsWithScripts);
-      console.log(`📜 Showing ${txsWithScripts.length} timelock-related transactions (fund/lock/unlock)`);
+      // Filter for timelock-related transactions by checking decoded outputs
+      const timelockTxs = txsWithDecoded.filter(tx => {
+        // Show receives to timelock addresses (locking)
+        if (tx.category === 'receive' && tx.address && timelockAddresses.has(tx.address)) {
+          return true;
+        }
+        
+        // For send transactions, check if ANY output goes to a timelock address
+        if (tx.category === 'send' && tx.decoded && tx.decoded.vout) {
+          const sendsToTimelock = tx.decoded.vout.some(output => {
+            if (output.scriptPubKey && output.scriptPubKey.address) {
+              return timelockAddresses.has(output.scriptPubKey.address);
+            }
+            return false;
+          });
+          
+          // Also check if this spends FROM a timelock (unlock operation)
+          // Look for P2SH witness script with CHECKLOCKTIMEVERIFY in inputs
+          if (tx.decoded.vin) {
+            const spendsFromTimelock = tx.decoded.vin.some(input => {
+              // Check scriptSig for P2SH redeem script with CLTV
+              if (input.scriptSig && input.scriptSig.asm && 
+                  input.scriptSig.asm.includes('OP_CHECKLOCKTIMEVERIFY')) {
+                return true;
+              }
+              // Check witness data for SegWit P2SH
+              if (input.txinwitness && input.txinwitness.length > 0) {
+                const lastWitnessItem = input.txinwitness[input.txinwitness.length - 1];
+                // Decode hex and look for CLTV opcode (0xb1)
+                if (lastWitnessItem && lastWitnessItem.includes('b1')) {
+                  return true;
+                }
+              }
+              return false;
+            });
+            if (spendsFromTimelock) return true;
+          }
+          
+          return sendsToTimelock;
+        }
+        
+        return false;
+      }).slice(0, 10);
+      
+      setRecentTransactions(timelockTxs);
+      console.log(`📜 Showing ${timelockTxs.length} timelock-related transactions (fund/lock/unlock)`);
     } catch (error) {
       console.error('Error fetching transactions:', error);
     }
