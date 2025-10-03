@@ -23,6 +23,8 @@ function App() {
   const [unlockFee, setUnlockFee] = useState(500);
   const [selectedTimelock, setSelectedTimelock] = useState(null);
   const [apiConnected, setApiConnected] = useState(false);
+  const [releasedBalance, setReleasedBalance] = useState(null);
+  const [releasedAddress, setReleasedAddress] = useState(null);
 
   // Check API connection
   useEffect(() => {
@@ -108,7 +110,7 @@ function App() {
     if (apiConnected) {
       try {
         setStatus('Scanning for UTXOs...');
-        const utxos = await bitcoinApi.getUtxosForAddress(lock.lockupAddress, network);
+        const utxos = await bitcoinApi.getUtxosForAddress(lock.p2shAddress, network);
         
         if (utxos.length > 0) {
           // Auto-fill with the first UTXO found
@@ -160,6 +162,21 @@ function App() {
     }
   };
 
+  const fetchReleasedBalance = async (address) => {
+    if (!apiConnected || !address) return;
+    
+    try {
+      const utxos = await bitcoinApi.getUtxosForAddress(address, network);
+      const totalBalance = utxos.reduce((sum, utxo) => sum + utxo.amount, 0);
+      setReleasedBalance(totalBalance);
+      setReleasedAddress(address);
+      console.log(`💰 Released address balance: ${totalBalance} BTC at ${address}`);
+    } catch (error) {
+      console.error('Error fetching released balance:', error);
+      setReleasedBalance(null);
+    }
+  };
+
   const handleFundTimelock = async (lock) => {
     if (!apiConnected) {
       showMessage('Bitcoin API not connected', 'error');
@@ -186,7 +203,7 @@ function App() {
     try {
       setStatus(`Funding timelock #${lock.id}...`);
       
-      const txid = await bitcoinApi.sendToAddress(lock.lockupAddress, amountBTC, network);
+      const txid = await bitcoinApi.sendToAddress(lock.p2shAddress, amountBTC, network);
       
       showMessage(`✓ Sent ${amountBTC} BTC to timelock! TXID: ${txid}`, 'success');
       
@@ -280,6 +297,26 @@ function App() {
           const broadcastTxid = await bitcoinApi.sendRawTransaction(result.signedTransaction, network);
           showMessage(`✓ Transaction broadcast successfully! TXID: ${broadcastTxid}`, 'success');
           setStatus('Transaction broadcast');
+          
+          // Auto-mine confirmation block on regtest
+          if (network === 'regtest') {
+            try {
+              const address = await bitcoinApi.getNewAddress(network);
+              await bitcoinApi.generateToAddress(1, address, network);
+              showMessage(`✓ Mined confirmation block`, 'success');
+              await fetchBlockHeight();
+            } catch (mineError) {
+              console.error('Could not mine confirmation block:', mineError);
+            }
+          }
+          
+          // Wait a moment for transaction to be indexed
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Fetch balance of released address after unlock
+          if (result.to) {
+            await fetchReleasedBalance(result.to);
+          }
           
           // Clear form after successful broadcast
           setUnlockTimelockId('');
@@ -539,6 +576,71 @@ bitcoin-cli -${network} sendrawtransaction ${result.signedTransaction}`;
         </div>
       </div>
 
+      {/* Released Address Balance */}
+      {releasedBalance !== null && releasedAddress && (
+        <div className="card" style={{ background: '#f0fdf4', borderColor: '#86efac' }}>
+          <h2>💰 Released Address Balance</h2>
+          
+          <div style={{ 
+            padding: '20px', 
+            background: 'white', 
+            borderRadius: '8px',
+            border: '2px solid #22c55e',
+            textAlign: 'center'
+          }}>
+            <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '8px' }}>
+              Latest Unlock Destination
+            </div>
+            <div style={{ 
+              fontSize: '2.5rem', 
+              fontWeight: 'bold', 
+              color: '#15803d',
+              marginBottom: '12px'
+            }}>
+              {releasedBalance.toFixed(8)} BTC
+            </div>
+            <div style={{ 
+              fontSize: '0.85rem', 
+              color: '#666',
+              wordBreak: 'break-all',
+              fontFamily: 'monospace',
+              background: '#f9fafb',
+              padding: '8px 12px',
+              borderRadius: '4px',
+              border: '1px solid #e5e7eb'
+            }}>
+              {releasedAddress}
+            </div>
+            {apiConnected && (
+              <button 
+                className="button"
+                style={{ 
+                  marginTop: '15px', 
+                  padding: '8px 16px', 
+                  fontSize: '0.9rem',
+                  background: '#22c55e',
+                  borderColor: '#22c55e'
+                }}
+                onClick={() => fetchReleasedBalance(releasedAddress)}
+              >
+                🔄 Refresh Balance
+              </button>
+            )}
+          </div>
+          
+          <div style={{ 
+            marginTop: '15px', 
+            padding: '12px', 
+            background: '#fef3c7', 
+            borderRadius: '6px',
+            fontSize: '0.85rem',
+            color: '#92400e'
+          }}>
+            <strong>ℹ️ Note:</strong> This shows the balance at the final destination address after successfully unlocking a timelock. It updates automatically when you click "Unlock Timelock".
+          </div>
+        </div>
+      )}
+
       {/* Create Timelock */}
       <div className="card">
         <h2>🔒 Create Timelock</h2>
@@ -723,7 +825,7 @@ bitcoin-cli -${network} sendrawtransaction ${result.signedTransaction}`;
                   </div>
                   <div className="detail-row">
                     <span className="detail-label">Lockup Address:</span>
-                    <span className="detail-value">{lock.lockupAddress}</span>
+                    <span className="detail-value">{lock.p2shAddress}</span>
                   </div>
                   <div className="detail-row">
                     <span className="detail-label">Released Address:</span>

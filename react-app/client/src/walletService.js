@@ -375,8 +375,8 @@ export const walletService = {
     // Add input
     tx.addInput(Buffer.from(txid, 'hex').reverse(), vout, 0xfffffffe);
     
-    // Add output
-    tx.addOutput(releasedPayment.output, BigInt(outputAmount));
+    // Add output (must be a regular Number, not BigInt)
+    tx.addOutput(releasedPayment.output, outputAmount);
     
     // Sign
     const hashType = bitcoin.Transaction.SIGHASH_ALL;

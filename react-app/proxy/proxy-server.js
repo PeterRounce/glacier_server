@@ -159,6 +159,39 @@ app.get('/api/listunspent', async (req, res) => {
     const minconf = req.query.minconf || 1;
     const address = req.query.address;
     
+    // If address is specified, use scantxoutset instead of listunspent
+    // because listunspent only shows wallet UTXOs
+    if (address) {
+      try {
+        const scanCommand = `scantxoutset start '["addr(${address})"]'`;
+        const scanResult = await bitcoinCli(scanCommand, network);
+        const scanData = JSON.parse(scanResult);
+        
+        // Format the output to match listunspent structure
+        const utxos = scanData.unspents ? scanData.unspents.map(utxo => ({
+          txid: utxo.txid,
+          vout: utxo.vout,
+          address: address,
+          scriptPubKey: utxo.scriptPubKey,
+          amount: utxo.amount,
+          confirmations: utxo.height ? scanData.height - utxo.height + 1 : 0,
+          spendable: false,
+          solvable: false
+        })) : [];
+        
+        res.json({ 
+          success: true, 
+          data: utxos,
+          network,
+          method: 'scantxoutset'
+        });
+        return;
+      } catch (scanError) {
+        console.error('scantxoutset failed, falling back to listunspent:', scanError.message);
+        // Fall through to listunspent
+      }
+    }
+    
     let command = `listunspent ${minconf}`;
     if (address) {
       command += ` 9999999 '["${address}"]'`;
