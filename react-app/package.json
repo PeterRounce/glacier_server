@@ -1,0 +1,14 @@
+{
+  "name": "glacier-timelock-app",
+  "version": "1.0.0",
+  "description": "Bitcoin Timelock Wallet - Standalone React App",
+  "scripts": {
+    "dev": "cd client && npm run dev",
+    "install-all": "cd client && npm install",
+    "build": "cd client && npm run build",
+    "preview": "cd client && npm run preview"
+  },
+  "keywords": ["bitcoin", "timelock", "bip32", "wallet"],
+  "author": "",
+  "license": "MIT"
+}
