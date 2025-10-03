@@ -256,6 +256,36 @@ app.get('/api/getnewaddress', async (req, res) => {
   }
 });
 
+// Send to address (for funding)
+app.post('/api/sendtoaddress', async (req, res) => {
+  try {
+    const { address, amount } = req.body;
+    const network = req.query.network || DEFAULT_NETWORK;
+    
+    if (!address || !amount) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Address and amount are required' 
+      });
+    }
+    
+    const result = await bitcoinCli(`sendtoaddress ${address} ${amount}`, network);
+    
+    res.json({ 
+      success: true, 
+      txid: result,
+      address,
+      amount,
+      network
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
 // Mine blocks (regtest only)
 app.post('/api/generatetoaddress', async (req, res) => {
   try {

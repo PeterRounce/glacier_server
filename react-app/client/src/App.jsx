@@ -160,6 +160,56 @@ function App() {
     }
   };
 
+  const handleFundTimelock = async (lock) => {
+    if (!apiConnected) {
+      showMessage('Bitcoin API not connected', 'error');
+      return;
+    }
+
+    const defaultAmount = 0.001;
+    const amount = prompt(
+      `Enter amount to send to timelock #${lock.id} (BTC):`,
+      defaultAmount.toString()
+    );
+    
+    if (amount === null) {
+      // User cancelled
+      return;
+    }
+
+    const amountBTC = parseFloat(amount);
+    if (isNaN(amountBTC) || amountBTC <= 0) {
+      showMessage('Invalid amount', 'error');
+      return;
+    }
+
+    try {
+      setStatus(`Funding timelock #${lock.id}...`);
+      
+      const txid = await bitcoinApi.sendToAddress(lock.lockupAddress, amountBTC, network);
+      
+      showMessage(`✓ Sent ${amountBTC} BTC to timelock! TXID: ${txid}`, 'success');
+      
+      // Auto-mine a block on regtest to confirm
+      if (network === 'regtest') {
+        try {
+          const address = await bitcoinApi.getNewAddress(network);
+          await bitcoinApi.generateToAddress(1, address, network);
+          showMessage(`✓ Mined confirmation block`, 'success');
+          await fetchBlockHeight();
+        } catch (mineError) {
+          console.error('Could not mine confirmation block:', mineError);
+        }
+      }
+      
+      setStatus('Ready');
+    } catch (error) {
+      console.error('Error funding timelock:', error);
+      showMessage(`✗ Failed to fund timelock: ${error.message}`, 'error');
+      setStatus('Error');
+    }
+  };
+
   const handleCreateTimelock = () => {
     try {
       const result = walletService.createTimelock(blockHeight);
@@ -701,10 +751,27 @@ bitcoin-cli -${network} sendrawtransaction ${result.signedTransaction}`;
                   )}
                 </div>
                 {lock.status === 'created' && (
-                  <div style={{ marginTop: '15px' }}>
+                  <div style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
+                    <button 
+                      className="button"
+                      style={{ 
+                        flex: 1, 
+                        background: '#38a169', 
+                        borderColor: '#38a169',
+                        fontSize: '0.9rem'
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleFundTimelock(lock);
+                      }}
+                      disabled={!apiConnected}
+                      title="Send funds to this timelock's lockup address"
+                    >
+                      💰 Fund
+                    </button>
                     <button 
                       className="button button-secondary"
-                      style={{ width: '100%' }}
+                      style={{ flex: 1, fontSize: '0.9rem' }}
                       onClick={(e) => {
                         e.stopPropagation();
                         selectTimelockForUnlock(lock);

@@ -169,6 +169,17 @@ export const bitcoinApi = {
     const utxos = await this.listUnspent(address, 0, network);
     return utxos;
   },
+
+  /**
+   * Send funds to an address
+   */
+  async sendToAddress(address, amount, network = 'regtest') {
+    const data = await fetchApi(`/api/sendtoaddress?network=${network}`, {
+      method: 'POST',
+      body: JSON.stringify({ address, amount }),
+    });
+    return data.txid;
+  },
 };
 
 export { BitcoinApiError };

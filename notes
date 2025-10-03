@@ -1,0 +1,64 @@
+# 1. Start with fallbackfee
+bitcoind -regtest -daemon -fallbackfee=0.00001
+
+# 2. Create wallet
+bitcoin-cli -regtest createwallet "test"
+
+# 3. Generate mining address and initial blocks
+MINING_ADDR=$(bitcoin-cli -regtest getnewaddress)
+bitcoin-cli -regtest generatetoaddress 101 $MINING_ADDR
+
+# batch 1
+# 1. Initialize API wallet
+curl -X POST http://localhost:3000/api/wallet/init \
+  -H "Content-Type: application/json" \
+  -d '{"mainnet": false}'
+
+# 1. Create timelock for block 105
+TIMELOCK_RESPONSE=$(curl -s -X POST http://localhost:3000/api/wallet/create-timelock \
+  -H "Content-Type: application/json" \
+  -d '{"blockHeight":315}')
+
+# 1. Extract P2SH address
+P2SH_ADDR=$(echo $TIMELOCK_RESPONSE | jq -r '.data.p2shAddress')
+echo "P2SH Address: $P2SH_ADDR"
+
+# 1. Send to P2SH (now works with fallbackfee!)
+bitcoin-cli -regtest sendtoaddress $P2SH_ADDR 0.001
+
+#batch 2
+# 2. Mine to confirm
+bitcoin-cli -regtest generatetoaddress 1 $MINING_ADDR
+
+# 2. Send to the CORRECT address
+NEW_TXID=$(bitcoin-cli -regtest sendtoaddress $P2SH_ADDR 0.001)
+echo "New TXID: $NEW_TXID"
+
+# 2. Mine a block
+bitcoin-cli -regtest generatetoaddress 1 $(bitcoin-cli -regtest getnewaddress)
+
+# 2. Get the vout
+VOUT=$(bitcoin-cli -regtest gettransaction $NEW_TXID | jq -r ".details[] | select(.address == \"$P2SH_ADDR\") | .vout")
+
+echo "TXID: $NEW_TXID"
+echo "VOUT: $VOUT"
+echo "P2SH Address: $P2SH_ADDR"
+
+#mine if needed
+
+# 3. Now unlock!
+curl -X POST http://localhost:3000/api/wallet/unlock-timelock \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"timelockId\": 0,
+    \"txid\": \"$NEW_TXID\",
+    \"vout\": $VOUT,
+    \"amountBTC\": 0.001,
+    \"feeSatoshis\": 500
+  }"
+
+
+
+
+
+
