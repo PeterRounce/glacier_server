@@ -65,6 +65,14 @@ export const bitcoinApi = {
   },
 
   /**
+   * Get transaction details with decoded scripts
+   */
+  async getTransactionDecoded(txid, network = 'regtest') {
+    const data = await fetchApi(`/api/transaction/${txid}/decoded?network=${network}`);
+    return data.data;
+  },
+
+  /**
    * Get raw transaction (decoded)
    */
   async getRawTransaction(txid, network = 'regtest') {

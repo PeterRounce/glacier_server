@@ -86,6 +86,40 @@ app.get('/api/blockchaininfo', async (req, res) => {
   }
 });
 
+// Get transaction details with decoded hex (includes scripts)
+// IMPORTANT: This route must come BEFORE /api/transaction/:txid to match correctly
+app.get('/api/transaction/:txid/decoded', async (req, res) => {
+  try {
+    const { txid } = req.params;
+    const network = req.query.network || DEFAULT_NETWORK;
+    
+    // Get transaction with verbose details
+    const result = await bitcoinCli(`gettransaction ${txid} true`, network);
+    const tx = JSON.parse(result);
+    
+    // Also decode the hex to get script details
+    if (tx.hex) {
+      try {
+        const decoded = await bitcoinCli(`decoderawtransaction ${tx.hex}`, network);
+        tx.decoded = JSON.parse(decoded);
+      } catch (decodeError) {
+        console.error('Could not decode transaction hex:', decodeError.message);
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      data: tx,
+      network
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
 // Get transaction details
 app.get('/api/transaction/:txid', async (req, res) => {
   try {
