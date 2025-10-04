@@ -219,8 +219,13 @@ code {
 }
 
 .status-created {
-  background: #bee3f8;
-  color: #2c5282;
+  background: #e2e8f0;
+  color: #4a5568;
+}
+
+.status-funded {
+  background: #fef3c7;
+  color: #92400e;
 }
 
 .status-unlocked {

@@ -360,6 +360,11 @@ function App() {
       
       const txid = await bitcoinApi.sendToAddress(lock.p2shAddress, amountBTC, network);
       
+      // Update timelock status to funded
+      lock.status = 'funded';
+      lock.lockingTxid = txid;
+      lock.fundedAt = new Date().toISOString();
+      
       showMessage(`✓ Sent ${amountBTC} BTC to timelock! TXID: ${txid}`, 'success');
       
       // Auto-mine a block on regtest to confirm
@@ -953,10 +958,10 @@ bitcoin-cli -${network} sendrawtransaction ${result.signedTransaction}`;
                 key={lock.id} 
                 className={`timelock-item ${selectedTimelock?.id === lock.id ? 'selected' : ''}`}
                 style={{ 
-                  cursor: lock.status === 'created' ? 'pointer' : 'default',
+                  cursor: lock.status === 'funded' ? 'pointer' : 'default',
                   border: selectedTimelock?.id === lock.id ? '2px solid #667eea' : '2px solid #e2e8f0'
                 }}
-                onClick={() => lock.status === 'created' && selectTimelockForUnlock(lock)}
+                onClick={() => lock.status === 'funded' && selectTimelockForUnlock(lock)}
               >
                 <div className="timelock-header">
                   <div className="timelock-id">Timelock #{lock.id}</div>
@@ -969,7 +974,7 @@ bitcoin-cli -${network} sendrawtransaction ${result.signedTransaction}`;
                     <span className="detail-label">Block Height:</span>
                     <span className="detail-value">
                       {lock.blockHeight}
-                      {currentBlockHeight !== null && lock.status === 'created' && (
+                      {currentBlockHeight !== null && lock.status === 'funded' && (
                         <span style={{ 
                           marginLeft: '8px', 
                           fontSize: '0.85em',
@@ -984,15 +989,11 @@ bitcoin-cli -${network} sendrawtransaction ${result.signedTransaction}`;
                     </span>
                   </div>
                   <div className="detail-row">
-                    <span className="detail-label">P2SH Address:</span>
+                    <span className="detail-label">Lockup Address (P2SH):</span>
                     <span className="detail-value">{lock.p2shAddress}</span>
                   </div>
                   <div className="detail-row">
-                    <span className="detail-label">Lockup Address:</span>
-                    <span className="detail-value">{lock.p2shAddress}</span>
-                  </div>
-                  <div className="detail-row">
-                    <span className="detail-label">Released Address:</span>
+                    <span className="detail-label">Release Address:</span>
                     <span className="detail-value">{lock.releasedAddress}</span>
                   </div>
                   <div className="detail-row">
@@ -1001,6 +1002,20 @@ bitcoin-cli -${network} sendrawtransaction ${result.signedTransaction}`;
                       {new Date(lock.createdAt).toLocaleString()}
                     </span>
                   </div>
+                  {lock.status === 'funded' && lock.fundedAt && (
+                    <div className="detail-row">
+                      <span className="detail-label">Funded:</span>
+                      <span className="detail-value">
+                        {new Date(lock.fundedAt).toLocaleString()}
+                      </span>
+                    </div>
+                  )}
+                  {lock.lockingTxid && (
+                    <div className="detail-row">
+                      <span className="detail-label">Lock TXID:</span>
+                      <span className="detail-value">{lock.lockingTxid}</span>
+                    </div>
+                  )}
                   {lock.status === 'unlocked' && (
                     <>
                       <div className="detail-row">
@@ -1059,323 +1074,6 @@ bitcoin-cli -${network} sendrawtransaction ${result.signedTransaction}`;
           </div>
         )}
       </div>
-
-      {/* Recent Transactions */}
-      {recentTransactions.length > 0 && (
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-            <h2>📜 Recent Transactions ({recentTransactions.length})</h2>
-            {apiConnected && (
-              <button 
-                className="button"
-                style={{ padding: '8px 16px', fontSize: '0.9rem' }}
-                onClick={fetchRecentTransactions}
-              >
-                🔄 Refresh
-              </button>
-            )}
-          </div>
-          
-          <div style={{ fontSize: '0.85rem', color: '#666', marginBottom: '15px' }}>
-            Showing fund, lock, and unlock transactions
-          </div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            {recentTransactions.map((tx, index) => {
-              const operation = getTimelockOperation(tx);
-              return (
-              <div 
-                key={tx.txid} 
-                style={{ 
-                  padding: '15px', 
-                  background: '#f9fafb', 
-                  borderRadius: '8px',
-                  border: '1px solid #e5e7eb'
-                }}
-              >
-                {/* Transaction Header */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
-                  <div>
-                    <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '4px' }}>
-                      Transaction #{index + 1}
-                    </div>
-                    <div style={{ 
-                      fontFamily: 'monospace', 
-                      fontSize: '0.8rem', 
-                      wordBreak: 'break-all',
-                      color: '#374151'
-                    }}>
-                      {tx.txid}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    {/* Operation Badge */}
-                    <div style={{ 
-                      padding: '4px 12px', 
-                      background: operation.color,
-                      color: 'white',
-                      borderRadius: '12px',
-                      fontSize: '0.75rem',
-                      fontWeight: '600',
-                      whiteSpace: 'nowrap'
-                    }}>
-                      {operation.icon} {operation.operation}
-                    </div>
-                    {/* Confirmations Badge */}
-                    <div style={{ 
-                      padding: '4px 12px', 
-                      background: tx.confirmations > 0 ? '#d1fae5' : '#fef3c7',
-                      color: tx.confirmations > 0 ? '#065f46' : '#92400e',
-                      borderRadius: '12px',
-                      fontSize: '0.75rem',
-                      fontWeight: '600',
-                      whiteSpace: 'nowrap'
-                    }}>
-                      {tx.confirmations > 0 ? `✓ ${tx.confirmations} conf` : '⏳ Pending'}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Transaction Details */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px', fontSize: '0.85rem' }}>
-                  <div>
-                    <div style={{ color: '#6b7280', fontSize: '0.75rem' }}>Category</div>
-                    <div style={{ fontWeight: '600', color: '#1f2937' }}>
-                      {tx.category === 'send' ? '📤 Send' : 
-                       tx.category === 'receive' ? '📥 Receive' :
-                       tx.category === 'generate' ? '⛏️ Mine' : tx.category}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ color: '#6b7280', fontSize: '0.75rem' }}>Amount</div>
-                    <div style={{ 
-                      fontWeight: '600',
-                      color: tx.amount >= 0 ? '#059669' : '#dc2626'
-                    }}>
-                      {tx.amount >= 0 ? '+' : ''}{tx.amount.toFixed(8)} BTC
-                    </div>
-                  </div>
-                  {tx.size && (
-                    <div>
-                      <div style={{ color: '#6b7280', fontSize: '0.75rem' }}>Size</div>
-                      <div style={{ fontWeight: '600', color: '#1f2937' }}>{tx.size} bytes</div>
-                    </div>
-                  )}
-                </div>
-
-                                {/* Transaction Details */}
-                {tx.address && (
-                  <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e5e7eb' }}>
-                    <div style={{ fontSize: '0.8rem', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
-                      � Address
-                    </div>
-                    <div style={{ 
-                      fontSize: '0.75rem', 
-                      color: '#6b7280', 
-                      fontFamily: 'monospace',
-                      wordBreak: 'break-all'
-                    }}>
-                      {tx.address}
-                    </div>
-                  </div>
-                )}
-                
-                {tx.fee && (
-                  <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e5e7eb' }}>
-                    <div style={{ fontSize: '0.8rem', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
-                      💸 Transaction Fee
-                    </div>
-                    <div style={{ fontSize: '0.85rem', color: '#dc2626', fontWeight: '600' }}>
-                      {Math.abs(tx.fee).toFixed(8)} BTC
-                    </div>
-                  </div>
-                )}
-
-                {/* Script Opcodes Section */}
-                {tx.decoded && tx.decoded.vout && tx.decoded.vout.length > 0 && (
-                  <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e5e7eb' }}>
-                    <div style={{ fontSize: '0.8rem', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
-                      🔐 Script Opcodes ({tx.decoded.vout.length} output{tx.decoded.vout.length !== 1 ? 's' : ''})
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      {tx.decoded.vout.map((output, i) => {
-                        const scriptInfo = decodeScriptType(output.scriptPubKey);
-                        return (
-                          <div key={i} style={{ 
-                            background: '#f9fafb', 
-                            padding: '10px', 
-                            borderRadius: '6px',
-                            border: '1px solid #e5e7eb'
-                          }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                              <div style={{ 
-                                fontSize: '0.7rem', 
-                                color: '#6b7280',
-                                fontWeight: '600'
-                              }}>
-                                Output #{i}:
-                              </div>
-                              <div style={{ 
-                                padding: '2px 8px', 
-                                background: scriptInfo.color,
-                                color: 'white',
-                                borderRadius: '4px',
-                                fontSize: '0.7rem',
-                                fontWeight: '600',
-                                fontFamily: 'monospace'
-                              }}>
-                                {scriptInfo.type}
-                              </div>
-                              <div style={{ 
-                                fontSize: '0.7rem', 
-                                fontWeight: '600',
-                                color: '#059669',
-                                marginLeft: 'auto'
-                              }}>
-                                {output.value} BTC
-                              </div>
-                            </div>
-                            
-                            {output.scriptPubKey.asm && (
-                              <div style={{ 
-                                fontSize: '0.7rem', 
-                                color: '#374151',
-                                fontFamily: 'monospace',
-                                background: 'white',
-                                padding: '6px 8px',
-                                borderRadius: '4px',
-                                wordBreak: 'break-all',
-                                lineHeight: '1.4'
-                              }}>
-                                <div style={{ color: '#9ca3af', marginBottom: '2px', fontSize: '0.65rem', fontWeight: '600' }}>
-                                  ASM:
-                                </div>
-                                {output.scriptPubKey.asm}
-                              </div>
-                            )}
-                            
-                            {output.scriptPubKey.hex && (
-                              <div style={{ 
-                                fontSize: '0.65rem', 
-                                color: '#6b7280',
-                                fontFamily: 'monospace',
-                                marginTop: '6px',
-                                wordBreak: 'break-all',
-                                lineHeight: '1.4'
-                              }}>
-                                <span style={{ color: '#9ca3af', fontWeight: '600' }}>HEX:</span> {output.scriptPubKey.hex}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Input Scripts with Opcodes */}
-                {tx.decoded && tx.decoded.vin && tx.decoded.vin.length > 0 && (
-                  <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e5e7eb' }}>
-                    <div style={{ fontSize: '0.8rem', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
-                      📥 Input Scripts ({tx.decoded.vin.length} input{tx.decoded.vin.length !== 1 ? 's' : ''})
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      {tx.decoded.vin.map((input, i) => (
-                        <div key={i} style={{ 
-                          background: '#f9fafb', 
-                          padding: '10px', 
-                          borderRadius: '6px',
-                          border: '1px solid #e5e7eb'
-                        }}>
-                          <div style={{ 
-                            fontSize: '0.7rem', 
-                            color: '#6b7280',
-                            fontWeight: '600',
-                            marginBottom: '6px'
-                          }}>
-                            {input.coinbase ? '⛏️ COINBASE (Mining Reward)' : `Input #${i}:`}
-                          </div>
-                          
-                          {input.coinbase ? (
-                            <div style={{ 
-                              fontSize: '0.65rem', 
-                              color: '#059669',
-                              fontFamily: 'monospace',
-                              wordBreak: 'break-all'
-                            }}>
-                              {input.coinbase}
-                            </div>
-                          ) : (
-                            <>
-                              {input.scriptSig && input.scriptSig.asm && (
-                                <div style={{ 
-                                  fontSize: '0.7rem', 
-                                  color: '#374151',
-                                  fontFamily: 'monospace',
-                                  background: 'white',
-                                  padding: '6px 8px',
-                                  borderRadius: '4px',
-                                  wordBreak: 'break-all',
-                                  lineHeight: '1.4',
-                                  marginBottom: '6px'
-                                }}>
-                                  <div style={{ color: '#9ca3af', marginBottom: '2px', fontSize: '0.65rem', fontWeight: '600' }}>
-                                    scriptSig ASM:
-                                  </div>
-                                  {input.scriptSig.asm}
-                                </div>
-                              )}
-                              
-                              {input.txinwitness && input.txinwitness.length > 0 && (
-                                <div style={{ 
-                                  fontSize: '0.7rem', 
-                                  color: '#374151',
-                                  fontFamily: 'monospace',
-                                  background: 'white',
-                                  padding: '6px 8px',
-                                  borderRadius: '4px',
-                                  wordBreak: 'break-all',
-                                  lineHeight: '1.4'
-                                }}>
-                                  <div style={{ color: '#9ca3af', marginBottom: '2px', fontSize: '0.65rem', fontWeight: '600' }}>
-                                    Witness ({input.txinwitness.length} element{input.txinwitness.length !== 1 ? 's' : ''}):
-                                  </div>
-                                  {input.txinwitness.map((witness, wi) => (
-                                    <div key={wi} style={{ marginTop: '4px', fontSize: '0.65rem' }}>
-                                      [{wi}] {witness.substring(0, 64)}{witness.length > 64 ? '...' : ''}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                              
-                              <div style={{ 
-                                fontSize: '0.65rem', 
-                                color: '#6b7280',
-                                fontFamily: 'monospace',
-                                marginTop: '6px'
-                              }}>
-                                Spends: {input.txid?.substring(0, 16)}...:{input.vout}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Timestamp */}
-                {tx.blocktime && (
-                  <div style={{ marginTop: '12px', fontSize: '0.75rem', color: '#9ca3af' }}>
-                    ⏰ {new Date(tx.blocktime * 1000).toLocaleString()}
-                  </div>
-                )}
-              </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

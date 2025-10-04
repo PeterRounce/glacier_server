@@ -97,13 +97,24 @@ app.get('/api/transaction/:txid/decoded', async (req, res) => {
     const result = await bitcoinCli(`gettransaction ${txid} true`, network);
     const tx = JSON.parse(result);
     
-    // Also decode the hex to get script details
+    // Use getrawtransaction with verbosity 2 to get prevout info
     if (tx.hex) {
       try {
-        const decoded = await bitcoinCli(`decoderawtransaction ${tx.hex}`, network);
-        tx.decoded = JSON.parse(decoded);
+        // Verbosity 2 includes prevout information for inputs
+        const rawTxResult = await bitcoinCli(`getrawtransaction ${txid} 2`, network);
+        const rawTx = JSON.parse(rawTxResult);
+        
+        // Use the raw transaction data which includes prevout
+        tx.decoded = rawTx;
       } catch (decodeError) {
-        console.error('Could not decode transaction hex:', decodeError.message);
+        console.error('Could not get raw transaction with prevout:', decodeError.message);
+        // Fallback to basic decoding
+        try {
+          const decoded = await bitcoinCli(`decoderawtransaction ${tx.hex}`, network);
+          tx.decoded = JSON.parse(decoded);
+        } catch (fallbackError) {
+          console.error('Could not decode transaction hex:', fallbackError.message);
+        }
       }
     }
     
