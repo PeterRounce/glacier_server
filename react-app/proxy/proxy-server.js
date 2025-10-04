@@ -93,36 +93,136 @@ app.get('/api/transaction/:txid/decoded', async (req, res) => {
     const { txid } = req.params;
     const network = req.query.network || DEFAULT_NETWORK;
     
-    // Get transaction with verbose details
-    const result = await bitcoinCli(`gettransaction ${txid} true`, network);
-    const tx = JSON.parse(result);
-    
-    // Use getrawtransaction with verbosity 2 to get prevout info
-    if (tx.hex) {
-      try {
-        // Verbosity 2 includes prevout information for inputs
-        const rawTxResult = await bitcoinCli(`getrawtransaction ${txid} 2`, network);
-        const rawTx = JSON.parse(rawTxResult);
-        
-        // Use the raw transaction data which includes prevout
-        tx.decoded = rawTx;
-      } catch (decodeError) {
-        console.error('Could not get raw transaction with prevout:', decodeError.message);
-        // Fallback to basic decoding
+    // Try gettransaction first (wallet transactions only, but includes confirmations/time)
+    try {
+      const result = await bitcoinCli(`gettransaction ${txid} true`, network);
+      const tx = JSON.parse(result);
+      
+      // Decode the hex if available
+      if (tx.hex) {
         try {
           const decoded = await bitcoinCli(`decoderawtransaction ${tx.hex}`, network);
-          tx.decoded = JSON.parse(decoded);
-        } catch (fallbackError) {
-          console.error('Could not decode transaction hex:', fallbackError.message);
+          const decodedTx = JSON.parse(decoded);
+          
+          // Try to get prevout info with getrawtransaction verbosity 2
+          if (tx.blockhash) {
+            try {
+              const rawTxResult = await bitcoinCli(`getrawtransaction ${txid} 2 ${tx.blockhash}`, network);
+              const rawTx = JSON.parse(rawTxResult);
+              
+              // Use raw transaction with prevout data, but keep wallet info
+              const mergedTx = {
+                ...rawTx,
+                confirmations: tx.confirmations,
+                time: tx.time,
+                blocktime: tx.blocktime || rawTx.blocktime
+              };
+              
+              res.json({ 
+                success: true, 
+                data: mergedTx,
+                network
+              });
+              return;
+            } catch (prevoutError) {
+              console.log('Could not get prevout data, using basic decode');
+            }
+          }
+          
+          // Merge wallet info with decoded transaction
+          const mergedTx = {
+            ...decodedTx,
+            confirmations: tx.confirmations || 0,
+            time: tx.time,
+            blocktime: tx.blocktime,
+            blockhash: tx.blockhash,
+            hex: tx.hex
+          };
+          
+          res.json({ 
+            success: true, 
+            data: mergedTx,
+            network
+          });
+          return;
+        } catch (decodeError) {
+          console.error('Could not decode transaction hex:', decodeError.message);
         }
       }
+      
+      // Return raw gettransaction result if decode failed
+      res.json({ 
+        success: true, 
+        data: tx,
+        network
+      });
+      return;
+    } catch (walletError) {
+      console.log('gettransaction failed (not a wallet transaction):', walletError.message);
     }
     
-    res.json({ 
-      success: true, 
-      data: tx,
-      network
-    });
+    // Fallback: Try getrawtransaction (requires -txindex or blockhash)
+    try {
+      const rawTxResult = await bitcoinCli(`getrawtransaction ${txid} 1`, network);
+      const rawTx = JSON.parse(rawTxResult);
+      
+      // Decode it
+      const decoded = await bitcoinCli(`decoderawtransaction ${rawTx.hex}`, network);
+      const decodedTx = JSON.parse(decoded);
+      
+      // Merge
+      const mergedTx = {
+        ...decodedTx,
+        confirmations: rawTx.confirmations || 0,
+        time: rawTx.time,
+        blocktime: rawTx.blocktime,
+        blockhash: rawTx.blockhash,
+        hex: rawTx.hex
+      };
+      
+      res.json({ 
+        success: true, 
+        data: mergedTx,
+        network
+      });
+    } catch (rawError) {
+      console.error('getrawtransaction failed:', rawError.message);
+      
+      // Last resort: Check mempool for unconfirmed transaction
+      try {
+        const mempoolResult = await bitcoinCli(`getmempoolentry ${txid}`, network);
+        const mempoolEntry = JSON.parse(mempoolResult);
+        
+        // Get raw transaction from mempool
+        const rawTxResult = await bitcoinCli(`getrawtransaction ${txid} 0`, network);
+        const rawHex = rawTxResult.trim();
+        
+        // Decode it
+        const decoded = await bitcoinCli(`decoderawtransaction ${rawHex}`, network);
+        const decodedTx = JSON.parse(decoded);
+        
+        // Add mempool info
+        const mergedTx = {
+          ...decodedTx,
+          confirmations: 0,
+          hex: rawHex,
+          inMempool: true,
+          mempoolTime: mempoolEntry.time
+        };
+        
+        res.json({ 
+          success: true, 
+          data: mergedTx,
+          network
+        });
+      } catch (mempoolError) {
+        console.error('getmempoolentry failed:', mempoolError.message);
+        res.status(500).json({ 
+          success: false, 
+          error: `Could not find transaction: ${rawError.message}. The transaction may not be in the wallet, mempool, or -txindex may not be enabled.`
+        });
+      }
+    }
   } catch (error) {
     res.status(500).json({ 
       success: false, 
@@ -272,16 +372,21 @@ app.post('/api/sendrawtransaction', async (req, res) => {
     }
     
     const result = await bitcoinCli(`sendrawtransaction ${hex}`, network);
+    const txid = result.trim(); // Remove any whitespace
+    
+    console.log(`✓ Transaction broadcast: ${txid}`);
     
     res.json({ 
       success: true, 
-      txid: result,
+      txid: txid,
       network
     });
   } catch (error) {
+    console.error('❌ sendrawtransaction error:', error.message);
     res.status(500).json({ 
       success: false, 
-      error: error.message 
+      error: error.message,
+      details: 'Check that bitcoind is running and the transaction is valid'
     });
   }
 });

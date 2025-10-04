@@ -26,6 +26,9 @@ function App() {
   const [releasedBalance, setReleasedBalance] = useState(null);
   const [releasedAddress, setReleasedAddress] = useState(null);
   const [recentTransactions, setRecentTransactions] = useState([]);
+  const [currentView, setCurrentView] = useState('main'); // 'main' or 'transaction'
+  const [selectedTxid, setSelectedTxid] = useState(null);
+  const [transactionDetails, setTransactionDetails] = useState(null);
 
   // Check API connection
   useEffect(() => {
@@ -332,6 +335,35 @@ function App() {
     }
   };
 
+  const viewTransactionDetails = async (txid) => {
+    console.log('🔍 viewTransactionDetails called with txid:', txid);
+    if (!txid) {
+      console.warn('No TXID provided');
+      return;
+    }
+    
+    try {
+      setStatus(`Loading transaction ${txid}...`);
+      console.log('Fetching transaction from API...');
+      const decoded = await bitcoinApi.getTransactionDecoded(txid, network);
+      console.log('Transaction data received:', decoded);
+      setTransactionDetails(decoded);
+      setSelectedTxid(txid);
+      setCurrentView('transaction');
+      setStatus('Ready');
+    } catch (error) {
+      console.error('❌ Error loading transaction:', error);
+      showMessage(`Failed to load transaction: ${error.message}`, 'error');
+      setStatus('Error');
+    }
+  };
+
+  const backToMain = () => {
+    setCurrentView('main');
+    setSelectedTxid(null);
+    setTransactionDetails(null);
+  };
+
   const handleFundTimelock = async (lock) => {
     if (!apiConnected) {
       showMessage('Bitcoin API not connected', 'error');
@@ -460,7 +492,9 @@ function App() {
       // Try to broadcast if API is connected
       if (apiConnected) {
         try {
+          console.log('Broadcasting transaction hex:', result.signedTransaction);
           const broadcastTxid = await bitcoinApi.sendRawTransaction(result.signedTransaction, network);
+          console.log('✓ Broadcast successful, TXID:', broadcastTxid);
           showMessage(`✓ Transaction broadcast successfully! TXID: ${broadcastTxid}`, 'success');
           setStatus('Transaction broadcast');
           
@@ -496,7 +530,29 @@ function App() {
           
           loadTimelocks();
         } catch (broadcastError) {
-          console.error('Broadcast error:', broadcastError);
+          console.error('❌ Broadcast error:', broadcastError);
+          console.error('Error details:', broadcastError.response);
+          
+          // Check if it's a "non-final" error (locktime not reached)
+          const isNonFinal = broadcastError.message.includes('non-final');
+          const blocksNeeded = isNonFinal ? (result.blockHeight - currentBlockHeight) : 0;
+          
+          let errorMessage = `Transaction signed but broadcast failed: ${broadcastError.message}`;
+          
+          if (isNonFinal && blocksNeeded > 0) {
+            errorMessage = `❌ Cannot broadcast yet - Locktime not reached!
+
+This timelock requires block height ${result.blockHeight}
+Current block height: ${currentBlockHeight}
+Blocks remaining: ${blocksNeeded}
+
+You need to mine ${blocksNeeded} more block${blocksNeeded !== 1 ? 's' : ''} first.`;
+            
+            showMessage(`Timelock not ready - need ${blocksNeeded} more blocks`, 'error');
+            alert(errorMessage);
+            setStatus('Ready');
+            return;
+          }
           
           // Display transaction details for manual broadcast
           const txDisplay = `Transaction signed but broadcast failed: ${broadcastError.message}
@@ -636,6 +692,287 @@ bitcoin-cli -${network} sendrawtransaction ${result.signedTransaction}`;
               {message.text}
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // Transaction Details View
+  if (currentView === 'transaction' && transactionDetails) {
+    return (
+      <div className="app">
+        <div className="header">
+          <h1>🏔️ Glacier Timelock Wallet</h1>
+          <p>Bitcoin HD Wallet with Time-Locked Transactions</p>
+        </div>
+
+        {message && (
+          <div className={`alert alert-${message.type}`}>
+            {message.text}
+          </div>
+        )}
+
+        <div className="card">
+          <button 
+            className="button" 
+            onClick={backToMain}
+            style={{ marginBottom: '20px' }}
+          >
+            ← Back to Wallet
+          </button>
+
+          <h2>🔍 Transaction Details</h2>
+          
+          <div className="detail-row">
+            <span className="detail-label">Transaction ID:</span>
+            <span className="detail-value" style={{ wordBreak: 'break-all', fontFamily: 'monospace' }}>
+              {selectedTxid}
+            </span>
+          </div>
+
+          {transactionDetails.time && (
+            <div className="detail-row">
+              <span className="detail-label">Time:</span>
+              <span className="detail-value">
+                {new Date(transactionDetails.time * 1000).toLocaleString()}
+              </span>
+            </div>
+          )}
+
+          {transactionDetails.blocktime && !transactionDetails.time && (
+            <div className="detail-row">
+              <span className="detail-label">Block Time:</span>
+              <span className="detail-value">
+                {new Date(transactionDetails.blocktime * 1000).toLocaleString()}
+              </span>
+            </div>
+          )}
+
+          <div className="detail-row">
+            <span className="detail-label">Status:</span>
+            <span className="detail-value">
+              {(transactionDetails.confirmations || 0) > 0 ? (
+                <span style={{ color: '#38a169' }}>
+                  ✓ Confirmed ({transactionDetails.confirmations} confirmation{transactionDetails.confirmations !== 1 ? 's' : ''})
+                </span>
+              ) : (
+                <span style={{ color: '#e53e3e' }}>
+                  ⚠️ Unconfirmed (in mempool)
+                </span>
+              )}
+            </span>
+          </div>
+
+          {transactionDetails.blockhash && (
+            <div className="detail-row">
+              <span className="detail-label">Block Hash:</span>
+              <span className="detail-value" style={{ wordBreak: 'break-all', fontFamily: 'monospace', fontSize: '0.85em' }}>
+                {transactionDetails.blockhash}
+              </span>
+            </div>
+          )}
+
+          {transactionDetails.size && (
+            <div className="detail-row">
+              <span className="detail-label">Size:</span>
+              <span className="detail-value">{transactionDetails.size} bytes</span>
+            </div>
+          )}
+
+          {transactionDetails.vsize && (
+            <div className="detail-row">
+              <span className="detail-label">Virtual Size:</span>
+              <span className="detail-value">{transactionDetails.vsize} vbytes</span>
+            </div>
+          )}
+
+          {transactionDetails.weight && (
+            <div className="detail-row">
+              <span className="detail-label">Weight:</span>
+              <span className="detail-value">{transactionDetails.weight} WU</span>
+            </div>
+          )}
+
+          {transactionDetails.version !== undefined && (
+            <div className="detail-row">
+              <span className="detail-label">Version:</span>
+              <span className="detail-value">{transactionDetails.version}</span>
+            </div>
+          )}
+
+          {transactionDetails.locktime !== undefined && (
+            <div className="detail-row">
+              <span className="detail-label">Locktime:</span>
+              <span className="detail-value">{transactionDetails.locktime}</span>
+            </div>
+          )}
+
+          {/* Raw Transaction Hex */}
+          <div style={{ marginTop: '20px' }}>
+            <h3>Raw Transaction (Hex)</h3>
+            <div style={{ 
+              background: '#f7fafc', 
+              padding: '15px', 
+              borderRadius: '6px', 
+              border: '1px solid #e2e8f0',
+              fontFamily: 'monospace',
+              fontSize: '0.85em',
+              wordBreak: 'break-all',
+              maxHeight: '200px',
+              overflow: 'auto'
+            }}>
+              {transactionDetails.hex}
+            </div>
+          </div>
+
+          {/* Decoded Transaction */}
+          <div style={{ marginTop: '20px' }}>
+            <h3>Decoded Transaction</h3>
+            
+            {/* Inputs */}
+            <div style={{ marginTop: '15px' }}>
+              <h4>Inputs ({transactionDetails.vin?.length || 0})</h4>
+              {transactionDetails.vin?.map((input, idx) => (
+                <div key={idx} style={{ 
+                  background: '#f7fafc', 
+                  padding: '15px', 
+                  borderRadius: '6px', 
+                  border: '1px solid #e2e8f0',
+                  marginBottom: '10px'
+                }}>
+                  <div className="detail-row">
+                    <span className="detail-label">Input #{idx}</span>
+                  </div>
+                  {input.txid && (
+                    <div className="detail-row">
+                      <span className="detail-label">Previous TXID:</span>
+                      <span className="detail-value" style={{ fontFamily: 'monospace', fontSize: '0.85em', wordBreak: 'break-all' }}>
+                        {input.txid}
+                      </span>
+                    </div>
+                  )}
+                  {input.vout !== undefined && (
+                    <div className="detail-row">
+                      <span className="detail-label">Vout:</span>
+                      <span className="detail-value">{input.vout}</span>
+                    </div>
+                  )}
+                  {input.prevout?.scriptPubKey?.address && (
+                    <div className="detail-row">
+                      <span className="detail-label">From Address:</span>
+                      <span className="detail-value" style={{ fontFamily: 'monospace', fontSize: '0.9em' }}>
+                        {input.prevout.scriptPubKey.address}
+                      </span>
+                    </div>
+                  )}
+                  {input.prevout?.value && (
+                    <div className="detail-row">
+                      <span className="detail-label">Amount:</span>
+                      <span className="detail-value">{input.prevout.value} BTC</span>
+                    </div>
+                  )}
+                  {input.scriptSig?.asm && (
+                    <div style={{ marginTop: '10px' }}>
+                      <span className="detail-label" style={{ display: 'block', marginBottom: '5px' }}>
+                        ScriptSig (ASM):
+                      </span>
+                      <div style={{ 
+                        fontFamily: 'monospace', 
+                        fontSize: '0.8em', 
+                        background: '#fff',
+                        padding: '10px',
+                        borderRadius: '4px',
+                        wordBreak: 'break-all'
+                      }}>
+                        {input.scriptSig.asm}
+                      </div>
+                    </div>
+                  )}
+                  {input.txinwitness && input.txinwitness.length > 0 && (
+                    <div style={{ marginTop: '10px' }}>
+                      <span className="detail-label" style={{ display: 'block', marginBottom: '5px' }}>
+                        Witness Data:
+                      </span>
+                      <div style={{ 
+                        fontFamily: 'monospace', 
+                        fontSize: '0.8em', 
+                        background: '#fff',
+                        padding: '10px',
+                        borderRadius: '4px'
+                      }}>
+                        {input.txinwitness.map((w, i) => (
+                          <div key={i} style={{ wordBreak: 'break-all', marginBottom: '5px' }}>
+                            [{i}]: {w}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {input.sequence && (
+                    <div className="detail-row">
+                      <span className="detail-label">Sequence:</span>
+                      <span className="detail-value">{input.sequence}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Outputs */}
+            <div style={{ marginTop: '15px' }}>
+              <h4>Outputs ({transactionDetails.vout?.length || 0})</h4>
+              {transactionDetails.vout?.map((output, idx) => (
+                <div key={idx} style={{ 
+                  background: '#f7fafc', 
+                  padding: '15px', 
+                  borderRadius: '6px', 
+                  border: '1px solid #e2e8f0',
+                  marginBottom: '10px'
+                }}>
+                  <div className="detail-row">
+                    <span className="detail-label">Output #{idx}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Amount:</span>
+                    <span className="detail-value" style={{ fontWeight: 'bold' }}>
+                      {output.value} BTC
+                    </span>
+                  </div>
+                  {output.scriptPubKey?.address && (
+                    <div className="detail-row">
+                      <span className="detail-label">Address:</span>
+                      <span className="detail-value" style={{ fontFamily: 'monospace', fontSize: '0.9em' }}>
+                        {output.scriptPubKey.address}
+                      </span>
+                    </div>
+                  )}
+                  {output.scriptPubKey?.type && (
+                    <div className="detail-row">
+                      <span className="detail-label">Script Type:</span>
+                      <span className="detail-value">{output.scriptPubKey.type}</span>
+                    </div>
+                  )}
+                  {output.scriptPubKey?.asm && (
+                    <div style={{ marginTop: '10px' }}>
+                      <span className="detail-label" style={{ display: 'block', marginBottom: '5px' }}>
+                        ScriptPubKey (ASM):
+                      </span>
+                      <div style={{ 
+                        fontFamily: 'monospace', 
+                        fontSize: '0.8em', 
+                        background: '#fff',
+                        padding: '10px',
+                        borderRadius: '4px',
+                        wordBreak: 'break-all'
+                      }}>
+                        {output.scriptPubKey.asm}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1013,7 +1350,16 @@ bitcoin-cli -${network} sendrawtransaction ${result.signedTransaction}`;
                   {lock.lockingTxid && (
                     <div className="detail-row">
                       <span className="detail-label">Lock TXID:</span>
-                      <span className="detail-value">{lock.lockingTxid}</span>
+                      <span 
+                        className="detail-value txid-link" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          viewTransactionDetails(lock.lockingTxid);
+                        }}
+                        style={{ cursor: 'pointer', color: '#667eea', textDecoration: 'underline' }}
+                      >
+                        {lock.lockingTxid}
+                      </span>
                     </div>
                   )}
                   {lock.status === 'unlocked' && (
@@ -1026,7 +1372,16 @@ bitcoin-cli -${network} sendrawtransaction ${result.signedTransaction}`;
                       </div>
                       <div className="detail-row">
                         <span className="detail-label">Unlock TXID:</span>
-                        <span className="detail-value">{lock.unlockingTxid}</span>
+                        <span 
+                          className="detail-value txid-link" 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            viewTransactionDetails(lock.unlockingTxid);
+                          }}
+                          style={{ cursor: 'pointer', color: '#667eea', textDecoration: 'underline' }}
+                        >
+                          {lock.unlockingTxid}
+                        </span>
                       </div>
                     </>
                   )}
